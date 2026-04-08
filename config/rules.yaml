@@ -629,4 +629,35 @@ analysis:
   parallel: true
   cache_enabled: true
 
+pr_explanation:
+  enabled: true
+  provider: ollama
+  model: qwen2.5-coder:1.5b
+  base_url: http://127.0.0.1:11434
+  fallback_to_heuristic: true
+  timeout_seconds: 120
+  include_extensions:
+    - .java
+    - .ts
+    - .tsx
+    - .scss
+  exclude_directories:
+    - .git
+    - .hg
+    - .svn
+    - .idea
+    - .next
+    - .nuxt
+    - .turbo
+    - .cache
+    - node_modules
+    - dist
+    - build
+    - coverage
+    - target
+    - out
+    - __pycache__
+  max_summary_points: 5
+  max_file_points: 4
+
 # Made with Bob

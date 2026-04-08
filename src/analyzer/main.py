@@ -12,6 +12,8 @@ import colorama
 from colorama import Fore, Style
 
 from .rule_engine import RuleEngine
+from .pr_explanation_analyzer import PRExplanationAnalyzer
+import yaml
 
 
 colorama.init(autoreset=True)
@@ -28,12 +30,43 @@ def read_file(file_path: str) -> str:
 
 
 SUPPORTED_EXTENSIONS = ('.java', '.ts', '.tsx', '.scss')
+EXCLUDED_DIRECTORIES = {
+    '.git',
+    '.hg',
+    '.svn',
+    '.idea',
+    '.next',
+    '.nuxt',
+    '.turbo',
+    '.cache',
+    'node_modules',
+    'dist',
+    'build',
+    'coverage',
+    'target',
+    'out',
+    '__pycache__'
+}
 
+
+def load_config(config_path: str) -> Dict:
+    """Load YAML configuration for non-rule-engine consumers."""
+    try:
+        with open(config_path, 'r', encoding='utf-8') as file_handle:
+            return yaml.safe_load(file_handle) or {}
+    except FileNotFoundError:
+        print(f"{Fore.YELLOW}Warning: Config file {config_path} not found. Using defaults.")
+        return {}
 
 def find_supported_files(directory: str) -> List[str]:
     """Find all supported source files in directory"""
     supported_files = []
     for root, dirs, files in os.walk(directory):
+        dirs[:] = [
+            dir_name for dir_name in dirs
+            if dir_name not in EXCLUDED_DIRECTORIES
+        ]
+
         for file in files:
             if file.endswith(SUPPORTED_EXTENSIONS):
                 supported_files.append(os.path.join(root, file))
@@ -90,6 +123,45 @@ def print_summary(results: Dict):
     else:
         print(f"\n{Fore.GREEN}{Style.BRIGHT}✅ PR CAN BE MERGED")
         print(f"{Fore.GREEN}   No blocking violations found")
+
+
+def print_explanation_summary(results: Dict):
+    """Print PR explanation summary"""
+    summary = results.get('summary', {})
+    files = results.get('files', [])
+
+    print(f"\n{Style.BRIGHT}{'='*60}")
+    print(f"{Style.BRIGHT}PR CHANGE EXPLANATION")
+    print(f"{Style.BRIGHT}{'='*60}")
+
+    print(f"\n{Fore.WHITE}Files Explained: {len(files)}")
+
+    for section_title, color in [
+        ('what_changed', Fore.CYAN),
+        ('why_changed', Fore.YELLOW),
+        ('impact', Fore.GREEN)
+    ]:
+        points = summary.get(section_title, [])
+        if points:
+            print(f"\n{color}{Style.BRIGHT}{section_title.replace('_', ' ').title()}:")
+            for point in points:
+                print(f"{color}  • {point}")
+
+    for file_info in files:
+        print(f"\n{Style.BRIGHT}{Fore.WHITE}File: {file_info['file']}")
+        print(f"{Fore.WHITE}  Overview: {file_info['overview']}")
+
+        for label, key, color in [
+            ('What Changed', 'what_changed', Fore.CYAN),
+            ('Why Changed', 'why_changed', Fore.YELLOW),
+            ('Integration / Impact', 'integration_impact', Fore.GREEN),
+            ('Considerations', 'considerations', Fore.MAGENTA)
+        ]:
+            points = file_info.get(key, [])
+            if points:
+                print(f"{color}  {label}:")
+                for point in points:
+                    print(f"{color}    - {point}")
 
 
 def analyze_file_cmd(args):
@@ -160,6 +232,93 @@ def analyze_project_cmd(args):
     return 1 if results['should_block'] else 0
 
 
+def explain_project_cmd(args):
+    """Generate point-based explanation for supported files in a project"""
+    analyzer = PRExplanationAnalyzer(load_config(args.config))
+
+    print(f"{Fore.CYAN}Scanning for supported files in: {args.project}")
+    results = analyzer.analyze_project_files(
+        project_root=args.project,
+        pr_title=args.pr_title or "",
+        pr_description=args.pr_description or ""
+    )
+
+    print_explanation_summary(results)
+
+    if args.output:
+        with open(args.output, 'w') as f:
+            json.dump(results, f, indent=2)
+        print(f"\n{Fore.GREEN}Explanation saved to: {args.output}")
+
+    return 0
+
+
+def analyze_and_explain_project_cmd(args):
+    """Run violation analysis and PR explanation together"""
+    engine = RuleEngine(args.config)
+    explainer = PRExplanationAnalyzer(load_config(args.config))
+
+    print(f"{Fore.CYAN}Scanning for supported files in: {args.project}")
+    supported_files = find_supported_files(args.project)
+
+    if not supported_files:
+        print(f"{Fore.YELLOW}No supported files found ({', '.join(SUPPORTED_EXTENSIONS)})")
+        return 0
+
+    print(f"{Fore.CYAN}Found {len(supported_files)} supported files")
+
+    files = {}
+    changed_files = []
+
+    for file_path in supported_files:
+        content = read_file(file_path)
+        if content:
+            files[file_path] = content
+            changed_files.append({
+                'path': file_path,
+                'content': content,
+                'diff': '',
+                'change_type': 'modified',
+                'additions': len([line for line in content.splitlines() if line.strip()]),
+                'deletions': 0
+            })
+
+    print(f"{Fore.CYAN}Running violation analysis...")
+    violation_results = engine.analyze_files(files)
+
+    for severity in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']:
+        violations = violation_results['violations'][severity]
+        if violations:
+            print(f"\n{Style.BRIGHT}{severity} Violations ({len(violations)}):")
+            for violation in violations[:args.max_violations]:
+                print_violation(violation, args.show_code)
+
+            if len(violations) > args.max_violations:
+                print(f"{Fore.WHITE}   ... and {len(violations) - args.max_violations} more")
+
+    print_summary(violation_results)
+
+    print(f"\n{Fore.CYAN}Generating PR change explanation...")
+    explanation_results = explainer.analyze(
+        changed_files=changed_files,
+        pr_title=args.pr_title or "",
+        pr_description=args.pr_description or ""
+    )
+    print_explanation_summary(explanation_results)
+
+    combined_results = {
+        'violations': violation_results,
+        'explanation': explanation_results
+    }
+
+    if args.output:
+        with open(args.output, 'w') as f:
+            json.dump(combined_results, f, indent=2)
+        print(f"\n{Fore.GREEN}Combined results saved to: {args.output}")
+
+    return 1 if violation_results['should_block'] else 0
+
+
 def list_rules_cmd(args):
     """List all enabled rules"""
     engine = RuleEngine(args.config)
@@ -219,9 +378,26 @@ def main():
     project_parser.add_argument('--max-violations', type=int, default=10, 
                                help='Max violations to display per severity')
     
+    # Explain project command
+    explain_parser = subparsers.add_parser('explain', help='Generate PR-style change explanation for a project')
+    explain_parser.add_argument('project', help='Path to project directory')
+    explain_parser.add_argument('--pr-title', help='PR title context for explanation')
+    explain_parser.add_argument('--pr-description', help='PR description context for explanation')
+    explain_parser.add_argument('--output', '-o', help='Output file for explanation results (JSON)')
+
+    # Analyze and explain project command
+    review_parser = subparsers.add_parser('review', help='Run violations and PR-style explanation together')
+    review_parser.add_argument('project', help='Path to project directory')
+    review_parser.add_argument('--pr-title', help='PR title context for explanation')
+    review_parser.add_argument('--pr-description', help='PR description context for explanation')
+    review_parser.add_argument('--output', '-o', help='Output file for combined results (JSON)')
+    review_parser.add_argument('--show-code', action='store_true', help='Show code snippets')
+    review_parser.add_argument('--max-violations', type=int, default=10,
+                               help='Max violations to display per severity')
+
     # List rules command
     rules_parser = subparsers.add_parser('rules', help='List all enabled rules')
-    rules_parser.add_argument('--verbose', '-v', action='store_true', 
+    rules_parser.add_argument('--verbose', '-v', action='store_true',
                              help='Show rule descriptions')
     
     args = parser.parse_args()
@@ -235,6 +411,10 @@ def main():
             return analyze_file_cmd(args)
         elif args.command == 'project':
             return analyze_project_cmd(args)
+        elif args.command == 'explain':
+            return explain_project_cmd(args)
+        elif args.command == 'review':
+            return analyze_and_explain_project_cmd(args)
         elif args.command == 'rules':
             return list_rules_cmd(args)
     except KeyboardInterrupt:
