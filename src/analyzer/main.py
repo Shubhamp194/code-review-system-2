@@ -14,6 +14,7 @@ from colorama import Fore, Style
 from .rule_engine import RuleEngine
 from .pr_explanation_analyzer import PRExplanationAnalyzer
 from .defect_detector import PRDefectDetector
+from .design_recommendation_analyzer import PRDesignRecommendationAnalyzer
 import yaml
 
 
@@ -192,6 +193,34 @@ def print_defect_summary(results: Dict):
             print(f"{Fore.GREEN}    - Recommendation: {recommendation}")
 
 
+def print_design_recommendation_summary(results: Dict):
+    """Print design recommendation summary"""
+    recommendations = results.get('recommendations', [])
+
+    print(f"\n{Style.BRIGHT}{'='*60}")
+    print(f"{Style.BRIGHT}DESIGN RECOMMENDATIONS")
+    print(f"{Style.BRIGHT}{'='*60}")
+
+    print(f"\n{Fore.WHITE}Files Analyzed: {results.get('total_files_considered', 0)}")
+    print(f"{Fore.WHITE}Recommendations Found: {len(recommendations)}")
+
+    if not recommendations:
+        print(f"{Fore.GREEN}✅ No strong design-pattern recommendations identified")
+        return
+
+    for item in recommendations:
+        print(f"\n{Fore.CYAN}{Style.BRIGHT}{item.get('pattern', 'Design Recommendation')}")
+        print(f"{Fore.WHITE}  File: {item.get('file', 'unknown')}")
+        if item.get('current_approach'):
+            print(f"{Fore.WHITE}  Current Approach: {item.get('current_approach')}")
+        if item.get('recommendation'):
+            print(f"{Fore.YELLOW}  Recommendation: {item.get('recommendation')}")
+        for benefit in item.get('why_it_helps', []):
+            print(f"{Fore.GREEN}    - Benefit: {benefit}")
+        for alternative in item.get('alternatives', []):
+            print(f"{Fore.MAGENTA}    - Alternative: {alternative}")
+
+
 def analyze_file_cmd(args):
     """Analyze a single file"""
     engine = RuleEngine(args.config)
@@ -331,12 +360,53 @@ def defect_project_cmd(args):
     return 0
 
 
+def design_project_cmd(args):
+    """Generate design recommendations for supported files in a project"""
+    analyzer = PRDesignRecommendationAnalyzer(load_config(args.config))
+
+    print(f"{Fore.CYAN}Scanning for supported files in: {args.project}")
+    supported_files = find_supported_files(args.project)
+
+    if not supported_files:
+        print(f"{Fore.YELLOW}No supported files found ({', '.join(SUPPORTED_EXTENSIONS)})")
+        return 0
+
+    changed_files = []
+    for file_path in supported_files:
+        content = read_file(file_path)
+        if content:
+            changed_files.append({
+                'path': file_path,
+                'content': content,
+                'diff': '',
+                'change_type': 'modified',
+                'additions': len([line for line in content.splitlines() if line.strip()]),
+                'deletions': 0
+            })
+
+    results = analyzer.analyze(
+        changed_files=changed_files,
+        pr_title=args.pr_title or "",
+        pr_description=args.pr_description or ""
+    )
+
+    print_design_recommendation_summary(results)
+
+    if args.output:
+        with open(args.output, 'w') as f:
+            json.dump(results, f, indent=2)
+        print(f"\n{Fore.GREEN}Design recommendations saved to: {args.output}")
+
+    return 0
+
+
 def analyze_and_explain_project_cmd(args):
-    """Run violation analysis, PR explanation, and defect detection together"""
+    """Run violation analysis, PR explanation, defect detection, and design recommendations together"""
     engine = RuleEngine(args.config)
     loaded_config = load_config(args.config)
     explainer = PRExplanationAnalyzer(loaded_config)
     defect_detector = PRDefectDetector(loaded_config)
+    design_recommender = PRDesignRecommendationAnalyzer(loaded_config)
 
     print(f"{Fore.CYAN}Scanning for supported files in: {args.project}")
     supported_files = find_supported_files(args.project)
@@ -394,10 +464,19 @@ def analyze_and_explain_project_cmd(args):
     )
     print_defect_summary(defect_results)
 
+    print(f"\n{Fore.CYAN}Generating design recommendations for changed code...")
+    design_results = design_recommender.analyze(
+        changed_files=changed_files,
+        pr_title=args.pr_title or "",
+        pr_description=args.pr_description or ""
+    )
+    print_design_recommendation_summary(design_results)
+
     combined_results = {
         'explanation': explanation_results,
         'violations': violation_results,
-        'defects': defect_results
+        'defects': defect_results,
+        'design_recommendations': design_results
     }
 
     if args.output:
@@ -481,8 +560,15 @@ def main():
     defects_parser.add_argument('--pr-description', help='PR description context for defect detection')
     defects_parser.add_argument('--output', '-o', help='Output file for defect results (JSON)')
 
+    # Design recommendation command
+    design_parser = subparsers.add_parser('design', help='Generate design recommendations for supported files in a project')
+    design_parser.add_argument('project', help='Path to project directory')
+    design_parser.add_argument('--pr-title', help='PR title context for design recommendations')
+    design_parser.add_argument('--pr-description', help='PR description context for design recommendations')
+    design_parser.add_argument('--output', '-o', help='Output file for design recommendation results (JSON)')
+
     # Analyze and explain project command
-    review_parser = subparsers.add_parser('review', help='Run violations, PR-style explanation, and defect detection together')
+    review_parser = subparsers.add_parser('review', help='Run violations, PR-style explanation, defect detection, and design recommendations together')
     review_parser.add_argument('project', help='Path to project directory')
     review_parser.add_argument('--pr-title', help='PR title context for explanation')
     review_parser.add_argument('--pr-description', help='PR description context for explanation')
@@ -511,6 +597,8 @@ def main():
             return explain_project_cmd(args)
         elif args.command == 'defects':
             return defect_project_cmd(args)
+        elif args.command == 'design':
+            return design_project_cmd(args)
         elif args.command == 'review':
             return analyze_and_explain_project_cmd(args)
         elif args.command == 'rules':

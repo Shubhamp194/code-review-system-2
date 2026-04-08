@@ -152,6 +152,35 @@ jobs:
           echo "This step is informational and does not affect PR review status"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+      - name: Design Recommendation (Non-blocking)
+        id: design-recommendation
+        if: always()
+        timeout-minutes: 4
+        continue-on-error: true
+        run: |
+          if [ ! -s changed_files.txt ]; then
+            echo "No files to inspect for design recommendations"
+            exit 0
+          fi
+
+          echo ""
+          echo "🏗️ Generating design recommendations for PR changes..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          PR_TITLE="${{ github.event_name == 'pull_request' && github.event.pull_request.title || github.event.repository.name }}"
+          PR_DESCRIPTION="${{ github.event_name == 'pull_request' && github.event.pull_request.body || 'Manual workflow execution' }}"
+
+          PYTHONPATH=src python -m analyzer.main --config config/rules.yaml design . \
+            --pr-title "$PR_TITLE" \
+            --pr-description "$PR_DESCRIPTION" \
+            --output design-results.json || {
+              echo "⚠️  Design recommendation analysis failed"
+              echo "This does not affect the PR review status"
+            }
+
+          echo "This step is informational and does not affect PR review status"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
       - name: Upload Analysis Results
         uses: actions/upload-artifact@v4
         if: always()
@@ -161,6 +190,7 @@ jobs:
             analysis-results.json
             explanation-results.json
             defect-results.json
+            design-results.json
             /tmp/ollama.log
 
       - name: Summary
@@ -171,7 +201,7 @@ jobs:
           echo "🤖 AI Code Review Complete"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
-          echo "Three-Step Analysis:"
+          echo "Four-Step Analysis:"
           echo "  1. 🤖 AI Code Explanation (Non-blocking)"
           echo "     • Explains what changed and why"
           echo "     • Uses Ollama when available, with heuristic fallback"
@@ -186,6 +216,11 @@ jobs:
           echo "     • Uses Ollama to identify likely defects in changed code"
           echo "     • Focuses on PR-only changed files"
           echo "     • Does not block merge if it fails or finds issues"
+          echo "  4. 🏗️ Design Recommendation (Non-blocking)"
+          echo "     • Uses Ollama to suggest software design patterns"
+          echo "     • Can recommend alternatives such as Singleton, Factory, Strategy, Service Layer, etc."
+          echo "     • Focuses on PR-only changed files"
+          echo "     • Does not block merge if it fails or finds suggestions"
           echo ""
           echo "AI Model: qwen2.5-coder:1.5b"
           echo "Endpoint: http://127.0.0.1:11434"

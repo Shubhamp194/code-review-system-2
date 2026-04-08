@@ -675,4 +675,19 @@ pr_defect_detection:
     - .scss
   max_findings_per_file: 3
 
+pr_design_recommendation:
+  enabled: true
+  provider: ollama
+  model: qwen2.5-coder:1.5b
+  base_url: http://127.0.0.1:11434
+  fallback_to_heuristic: true
+  timeout_seconds: 45
+  non_blocking: true
+  include_extensions:
+    - .java
+    - .ts
+    - .tsx
+    - .scss
+  max_recommendations_per_file: 3
+
 # Made with Bob
