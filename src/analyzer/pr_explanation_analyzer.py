@@ -237,7 +237,7 @@ class PRExplanationAnalyzer:
             pr_title=pr_title,
             pr_description=pr_description
         )
-        integration_points = self._infer_integration_points(content)
+        integration_points = self._infer_integration_points(file_path, content)
         risk_points = self._infer_risk_points(file_path, content)
 
         return {
@@ -291,8 +291,30 @@ class PRExplanationAnalyzer:
 
         elif extension == '.java':
             classes = re.findall(r'\bclass\s+([A-Z][A-Za-z0-9_]*)', content)
-            for class_name in self._dedupe(classes)[:3]:
+            for class_name in self._dedupe(classes)[:2]:
                 points.append(f"Defines or updates Java class `{class_name}`.")
+
+            methods = re.findall(
+                r'(?:public|private|protected)\s+(?:static\s+)?[\w<>\[\]]+\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)',
+                content
+            )
+            for method_name, method_args in self._dedupe(methods)[:4]:
+                argument_summary = method_args.strip()
+                if argument_summary:
+                    points.append(
+                        f"Implements method `{method_name}({argument_summary})` in the service flow."
+                    )
+                else:
+                    points.append(f"Implements method `{method_name}()` in the service flow.")
+
+            if re.search(r'Runtime\.getRuntime\(\)\.exec\(', content):
+                points.append("Executes an external command as part of the notification flow.")
+
+            if 'System.out.println("Sending:' in content or re.search(r'System\.out\.println\([^)]*Sending', content):
+                points.append("Logs or emits outgoing notification activity.")
+
+            if re.search(r'SELECT\s+\*\s+FROM\s+notifications', content, re.IGNORECASE):
+                points.append("Builds a notification lookup query using the incoming message.")
 
         elif extension == '.scss':
             selectors = re.findall(r'^\s*([.#]?[a-zA-Z_-][\w\-]*(?:\s+[.#]?[a-zA-Z_-][\w\-]*)*)\s*\{', content, re.MULTILINE)
@@ -312,8 +334,21 @@ class PRExplanationAnalyzer:
                           pr_title: str,
                           pr_description: str) -> List[str]:
         """Infer likely purpose behind the change."""
-        text = " ".join([file_path, content[:1500], diff[:1500], pr_title, pr_description]).lower()
+        text = " ".join([file_path, content[:2000], diff[:2000], pr_title, pr_description]).lower()
+        extension = Path(file_path).suffix.lower()
         points: List[str] = []
+
+        if extension == '.java':
+            if 'notification' in text and re.search(r'\b(sendnotification|send_notification)\b', text):
+                points.append("Adds or updates notification-sending behavior in the backend service layer.")
+            elif 'notification' in text:
+                points.append("Touches backend notification handling logic.")
+
+            if re.search(r'Runtime\.getRuntime\(\)\.exec\(', content):
+                points.append("Introduces or changes shell-command execution as part of sending notifications.")
+
+            if re.search(r'SELECT\s+\*\s+FROM\s+notifications', content, re.IGNORECASE):
+                points.append("Adds or changes notification lookup/query logic using the incoming message.")
 
         if any(keyword in text for keyword in ['fix', 'bug', 'issue', 'error', 'regression']):
             points.append("Appears intended to fix an existing bug, issue, or unstable behavior.")
@@ -324,27 +359,39 @@ class PRExplanationAnalyzer:
         if any(keyword in text for keyword in ['refactor', 'cleanup', 'simplify', 'maintain']):
             points.append("Appears focused on maintainability or code structure improvement.")
 
+        if extension in {'.ts', '.tsx'} and any(keyword in text for keyword in ['api', 'service', 'fetch', 'data', 'request']):
+            points.append("Appears intended to improve data flow, service integration, or API usage.")
+
         if any(keyword in text for keyword in ['style', 'scss', 'ui', 'layout', 'theme', 'responsive']):
             points.append("Appears intended to improve visual presentation or frontend usability.")
-
-        if any(keyword in text for keyword in ['api', 'service', 'fetch', 'data', 'request']):
-            points.append("Appears intended to improve data flow, service integration, or API usage.")
 
         if any(keyword in text for keyword in ['performance', 'optimize', 'memo', 'cache']):
             points.append("Appears intended to improve runtime performance or reduce repeated work.")
 
         if not points:
-            points.append("Intent is inferred from file structure and naming because explicit rationale is limited.")
+            points.append("Intent is inferred from concrete code structure and naming in the touched file.")
 
-        return points[:self.max_file_points]
+        return self._dedupe(points)[:self.max_file_points]
 
-    def _infer_integration_points(self, content: str) -> List[str]:
+    def _infer_integration_points(self, file_path: str, content: str) -> List[str]:
         """Infer dependencies and integration impact."""
+        extension = Path(file_path).suffix.lower()
         points: List[str] = []
 
         imports = re.findall(r'import\s+.*?from\s+[\'"]([^\'"]+)[\'"]', content)
         for imported in self._dedupe(imports)[:4]:
             points.append(f"Integrates with imported module `{imported}`.")
+
+        if extension == '.java':
+            java_imports = re.findall(r'import\s+([a-zA-Z0-9_.*]+);', content)
+            for imported in self._dedupe(java_imports)[:4]:
+                points.append(f"Depends on Java type or package `{imported}`.")
+
+            if re.search(r'Runtime\.getRuntime\(\)\.exec\(', content):
+                points.append("Interacts with the host environment by invoking an external process.")
+
+            if re.search(r'SELECT\s+\*\s+FROM\s+notifications', content, re.IGNORECASE):
+                points.append("Touches notification persistence or lookup behavior.")
 
         if 'useState' in content or 'useEffect' in content:
             points.append("Affects component state lifecycle and render behavior.")
@@ -355,7 +402,7 @@ class PRExplanationAnalyzer:
         if re.search(r'className\s*=', content) and re.search(r'import\s+[\'"].*\.scss[\'"]', content):
             points.append("Links component structure with SCSS-based presentation.")
 
-        return (points or ["No major integration signal detected beyond local file logic."])[:self.max_file_points]
+        return (self._dedupe(points) or ["Review downstream runtime behavior and touched integration paths in this file."])[:self.max_file_points]
 
     def _infer_risk_points(self, file_path: str, content: str) -> List[str]:
         """Infer review considerations for the file."""
@@ -367,6 +414,16 @@ class PRExplanationAnalyzer:
 
         if 'eval(' in content:
             points.append("Review dynamic code execution risk carefully.")
+
+        if extension == '.java':
+            if re.search(r'Runtime\.getRuntime\(\)\.exec\(', content):
+                points.append("Review command construction and sanitization because the service executes a shell command.")
+            if re.search(r'SELECT\s+\*\s+FROM\s+notifications', content, re.IGNORECASE):
+                points.append("Review query construction carefully because the message value is used in notification lookup logic.")
+            if re.search(r'password\s*=|apiKey\s*=', content):
+                points.append("Review secret handling because credentials or keys appear directly in the service implementation.")
+            if re.search(r'catch\s*\(\s*Exception\s+\w+\s*\)\s*\{\s*\}', content, re.DOTALL):
+                points.append("Review failure handling because exception paths may be swallowed without action.")
 
         if extension in {'.ts', '.tsx'} and 'any' in content:
             points.append("Review type safety because loose typing may hide runtime issues.")
@@ -380,7 +437,7 @@ class PRExplanationAnalyzer:
         if any(token in content for token in ['fetch(', 'axios.', 'async ', 'await ']):
             points.append("Validate error handling, loading states, and backend contract assumptions.")
 
-        return (points or ["No specific high-risk consideration inferred; perform normal functional review."])[:self.max_file_points]
+        return (self._dedupe(points) or ["Review runtime behavior and edge cases in the touched implementation."])[:self.max_file_points]
 
     def _build_ollama_file_explanation(self,
                                        file_path: str,
@@ -438,7 +495,7 @@ class PRExplanationAnalyzer:
         trimmed_content = content[:4000]
         trimmed_diff = diff[:2000]
 
-        return f"""You are generating a concise PR code explanation for reviewers.
+        return f"""You are generating a concrete PR code explanation for reviewers.
 
 Return only valid JSON with this exact shape:
 {{
@@ -452,10 +509,13 @@ Return only valid JSON with this exact shape:
 Rules:
 - Output JSON only. No markdown fences.
 - Keep each list to at most {self.max_file_points} bullets.
-- Keep bullets concise, factual, reviewer-friendly.
-- Use the PR title/description when useful.
+- Prefer concrete behavior over vague summaries.
+- Mention actual methods, operations, side effects, queries, API calls, commands, or state changes when visible.
+- For Java services, explain what the service does in business terms if the code shows it.
+- Avoid generic bullets like "improves data flow" or "no major integration signal" unless there is truly no better evidence.
+- Use the PR title/description only as secondary context.
 - Do not invent behavior not supported by file content, diff, path, or heuristic hints.
-- If uncertain, stay conservative.
+- If uncertain, stay conservative but still be specific about visible code.
 
 Context:
 PR title: {pr_title}

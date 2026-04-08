@@ -6,6 +6,7 @@ import os
 import sys
 import json
 import argparse
+import subprocess
 from pathlib import Path
 from typing import Any, Dict, List
 import colorama
@@ -75,7 +76,23 @@ def find_supported_files(directory: str) -> List[str]:
     return supported_files
 
 
-def load_changed_files_from_list(project_root: str, changed_files_list_path: str) -> List[Dict[str, Any]]:
+def read_file_from_git_ref(git_ref: str, relative_path: str) -> str:
+    """Read file content from a git ref using git show."""
+    try:
+        result = subprocess.run(
+            ['git', 'show', f'{git_ref}:{relative_path}'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return result.stdout
+    except subprocess.CalledProcessError:
+        return ""
+
+
+def load_changed_files_from_list(project_root: str,
+                                 changed_files_list_path: str,
+                                 source_ref: str = "") -> List[Dict[str, Any]]:
     """Load changed-file metadata from a newline-delimited file list."""
     changed_files: List[Dict[str, Any]] = []
     seen_paths = set()
@@ -90,13 +107,16 @@ def load_changed_files_from_list(project_root: str, changed_files_list_path: str
         seen_paths.add(normalized_relative_path)
 
         file_path = os.path.join(project_root, normalized_relative_path)
-        if not os.path.isfile(file_path):
+
+        if not normalized_relative_path.endswith(SUPPORTED_EXTENSIONS):
             continue
 
-        if not file_path.endswith(SUPPORTED_EXTENSIONS):
-            continue
+        content = ""
+        if os.path.isfile(file_path):
+            content = read_file(file_path)
+        elif source_ref:
+            content = read_file_from_git_ref(source_ref, normalized_relative_path)
 
-        content = read_file(file_path)
         if not content:
             continue
 
@@ -116,7 +136,11 @@ def build_changed_files(args) -> List[Dict[str, Any]]:
     """Build changed file payload either from diff list or from full project scan."""
     if getattr(args, 'changed_files_list', None):
         print(f"{Fore.CYAN}Loading changed files from list: {args.changed_files_list}")
-        return load_changed_files_from_list(args.project, args.changed_files_list)
+        return load_changed_files_from_list(
+            args.project,
+            args.changed_files_list,
+            getattr(args, 'changed_files_source_ref', '')
+        )
 
     supported_files = find_supported_files(args.project)
     changed_files = []
@@ -579,6 +603,7 @@ def main():
     explain_parser.add_argument('--pr-description', help='PR description context for explanation')
     explain_parser.add_argument('--output', '-o', help='Output file for explanation results (JSON)')
     explain_parser.add_argument('--changed-files-list', help='Path to newline-delimited changed file list')
+    explain_parser.add_argument('--changed-files-source-ref', help='Git ref to read changed files from when absent locally')
 
     # Defect detection command
     defects_parser = subparsers.add_parser('defects', help='Detect likely defects for supported files in a project')
@@ -587,6 +612,7 @@ def main():
     defects_parser.add_argument('--pr-description', help='PR description context for defect detection')
     defects_parser.add_argument('--output', '-o', help='Output file for defect results (JSON)')
     defects_parser.add_argument('--changed-files-list', help='Path to newline-delimited changed file list')
+    defects_parser.add_argument('--changed-files-source-ref', help='Git ref to read changed files from when absent locally')
 
     # Design recommendation command
     design_parser = subparsers.add_parser('design', help='Generate design recommendations for supported files in a project')
@@ -595,6 +621,7 @@ def main():
     design_parser.add_argument('--pr-description', help='PR description context for design recommendations')
     design_parser.add_argument('--output', '-o', help='Output file for design recommendation results (JSON)')
     design_parser.add_argument('--changed-files-list', help='Path to newline-delimited changed file list')
+    design_parser.add_argument('--changed-files-source-ref', help='Git ref to read changed files from when absent locally')
 
     # Analyze and explain project command
     review_parser = subparsers.add_parser('review', help='Run violations, PR-style explanation, defect detection, and design recommendations together')
@@ -606,6 +633,7 @@ def main():
     review_parser.add_argument('--max-violations', type=int, default=10,
                                help='Max violations to display per severity')
     review_parser.add_argument('--changed-files-list', help='Path to newline-delimited changed file list')
+    review_parser.add_argument('--changed-files-source-ref', help='Git ref to read changed files from when absent locally')
 
     # List rules command
     rules_parser = subparsers.add_parser('rules', help='List all enabled rules')
