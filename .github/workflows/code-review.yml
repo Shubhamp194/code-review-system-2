@@ -68,7 +68,7 @@ jobs:
       - name: Generate AI Code Explanation (Non-blocking)
         id: ai-explanation
         if: always()
-        timeout-minutes: 4
+        timeout-minutes: 10
         continue-on-error: true
         run: |
           if [ ! -s changed_files.txt ]; then
@@ -126,7 +126,7 @@ jobs:
       - name: Detect Potential Defects (Non-blocking)
         id: defect-detection
         if: always()
-        timeout-minutes: 4
+        timeout-minutes: 10
         continue-on-error: true
         run: |
           if [ ! -s changed_files.txt ]; then
