@@ -1,0 +1,632 @@
+# Rule Configuration for Java Code Review System
+
+rules:
+  # HIGH PRIORITY - SECURITY (P0)
+  security:
+    - id: SEC001
+      name: IBM License Header
+      enabled: true
+      severity: HIGH
+      blocking: true
+      description: Every Java file must start with IBM copyright/license header
+      patterns:
+        - 'Copyright.*IBM'
+        - 'Licensed under.*Apache License'
+    
+    - id: SEC002
+      name: No Hardcoded Secrets
+      enabled: true
+      severity: CRITICAL
+      blocking: true
+      description: Detects hardcoded passwords, API keys, tokens, and secrets
+      patterns:
+        - 'password\s*=\s*["''][^"'']+["'']'
+        - 'api[_-]?key\s*=\s*["''][^"'']+["'']'
+        - 'secret\s*=\s*["''][^"'']+["'']'
+        - 'token\s*=\s*["''][^"'']+["'']'
+        - 'private[_-]?key\s*=\s*["''][^"'']+["'']'
+    
+    - id: SEC003
+      name: No SQL String Concatenation
+      enabled: true
+      severity: CRITICAL
+      blocking: true
+      description: Detects SQL injection vulnerabilities
+      patterns:
+        - 'executeQuery\s*\([^)]*\+[^)]*\)'
+        - 'executeUpdate\s*\([^)]*\+[^)]*\)'
+        - '"SELECT.*"\s*\+'
+        - '"INSERT.*"\s*\+'
+        - '"UPDATE.*"\s*\+'
+        - '"DELETE.*"\s*\+'
+    
+    - id: SEC004
+      name: No Runtime.exec with Variables
+      enabled: true
+      severity: CRITICAL
+      blocking: true
+      description: Detects command injection vulnerabilities
+      patterns:
+        - 'Runtime\.getRuntime\(\)\.exec\([^"''][^)]*\)'
+        - 'ProcessBuilder\([^"''][^)]*\)'
+    
+    - id: SEC005
+      name: No Logging Sensitive Data
+      enabled: true
+      severity: CRITICAL
+      blocking: true
+      description: Detects logging of sensitive information
+      patterns:
+        - 'log\.(info|debug|warn|error)\([^)]*password[^)]*\)'
+        - 'log\.(info|debug|warn|error)\([^)]*token[^)]*\)'
+        - 'log\.(info|debug|warn|error)\([^)]*secret[^)]*\)'
+        - 'log\.(info|debug|warn|error)\([^)]*apiKey[^)]*\)'
+
+  # HIGH PRIORITY - CODE QUALITY (P0)
+  code_quality:
+    - id: CQ001
+      name: No System.out/err.println
+      enabled: true
+      severity: HIGH
+      blocking: true
+      description: Use proper logging framework instead
+      patterns:
+        - 'System\.out\.println'
+        - 'System\.err\.println'
+        - 'System\.out\.print\('
+        - 'System\.err\.print\('
+    
+    - id: CQ002
+      name: No printStackTrace
+      enabled: true
+      severity: HIGH
+      blocking: true
+      description: Use proper logging with exception parameter
+      patterns:
+        - '\.printStackTrace\(\)'
+    
+    - id: CQ003
+      name: No TODO/FIXME Comments
+      enabled: true
+      severity: HIGH
+      blocking: true
+      description: Create issues instead of TODO comments
+      patterns:
+        - '//\s*TODO'
+        - '//\s*FIXME'
+        - '/\*\s*TODO'
+        - '/\*\s*FIXME'
+    
+    - id: CQ004
+      name: No Empty Catch Blocks
+      enabled: true
+      severity: CRITICAL
+      blocking: true
+      description: Catch blocks must handle exceptions
+      patterns:
+        - 'catch\s*\([^)]+\)\s*\{\s*\}'
+    
+    - id: CQ005
+      name: No Catching Generic Exception
+      enabled: true
+      severity: HIGH
+      blocking: true
+      description: Catch specific exception types
+      patterns:
+        - 'catch\s*\(\s*Exception\s+'
+        - 'catch\s*\(\s*Throwable\s+'
+    
+    - id: CQ006
+      name: No Hardcoded URLs
+      enabled: true
+      severity: HIGH
+      blocking: true
+      description: Use configuration for URLs
+      patterns:
+        - 'https?://[^\s"'']+(?=["''])'
+    
+    - id: CQ007
+      name: No Hardcoded File Paths
+      enabled: true
+      severity: HIGH
+      blocking: true
+      description: Use system properties or configuration
+      patterns:
+        - '/tmp/'
+        - '/home/'
+        - '/usr/'
+        - 'C:\\\\'
+        - 'D:\\\\'
+    
+    - id: CQ008
+      name: No Commented-Out Code
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Remove commented code blocks
+      min_consecutive_comments: 5
+
+  # MEDIUM PRIORITY - IMPORTS & FORMATTING (P1)
+  imports:
+    - id: IMP001
+      name: No Wildcard Imports
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Import specific classes
+      patterns:
+        - 'import\s+[a-zA-Z0-9.]+\.\*;'
+        - 'import\s+static\s+[a-zA-Z0-9.]+\.\*;'
+    
+    - id: IMP002
+      name: No Duplicate Imports
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Remove duplicate import statements
+
+  formatting:
+    - id: FMT001
+      name: No Trailing Whitespace
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Remove trailing whitespace
+    
+    - id: FMT002
+      name: Max Consecutive Blank Lines
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Limit consecutive blank lines
+      max_blank_lines: 2
+    
+    - id: FMT003
+      name: Line Length Limit
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Keep lines under 120 characters
+      max_line_length: 120
+    
+    - id: FMT004
+      name: File Must End with Newline
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Add newline at end of file
+
+  # NAMING CONVENTIONS (P1)
+  naming:
+    - id: NAM001
+      name: Lowercase Package Names
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Package names must be lowercase
+      pattern: 'package\s+[a-z0-9.]*[A-Z][a-z0-9.]*;'
+    
+    - id: NAM002
+      name: UpperCamelCase Class Names
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Class names must be UpperCamelCase
+      pattern: '(class|interface|enum)\s+[a-z]'
+    
+    - id: NAM003
+      name: lowerCamelCase Method Names
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Method names must be lowerCamelCase
+      pattern: '(public|private|protected)\s+\w+\s+[A-Z]\w+\s*\('
+    
+    - id: NAM004
+      name: UPPER_SNAKE_CASE Constants
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Constants must be UPPER_SNAKE_CASE
+      pattern: 'static\s+final\s+\w+\s+[a-z]'
+    
+    - id: NAM005
+      name: No Generic Variable Names
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Use descriptive variable names
+      blacklist:
+        - temp
+        - data
+        - obj
+        - var
+        - thing
+        - stuff
+        - foo
+        - bar
+    
+    - id: NAM007
+      name: Boolean Naming Convention
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Boolean variables should start with is/has/should
+      pattern: 'boolean\s+(?!is|has|should|can|will)\w+'
+
+  # LOGGING RULES (P1)
+  logging:
+    - id: LOG001
+      name: No String Concatenation in Logging
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Use parameterized logging
+      patterns:
+        - 'log\.(info|debug|warn|error)\([^)]*\+[^)]*\)'
+    
+    - id: LOG002
+      name: Logger Variable Naming
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Name logger as log or logger
+      pattern: 'Logger\s+(?!log|logger)\w+\s*='
+
+  # EXCEPTION HANDLING (P0/P1)
+  exceptions:
+    - id: EXC001
+      name: Exceptions Must Be Logged
+      enabled: true
+      severity: HIGH
+      blocking: true
+      description: Always log exceptions in catch blocks
+    
+    - id: EXC002
+      name: No Throwing Generic Exception
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Throw specific exception types
+      pattern: 'throw\s+new\s+Exception\('
+
+  # BEST PRACTICES (P1)
+  best_practices:
+    - id: BP001
+      name: No Debug Flags
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Use configuration for debug flags
+      patterns:
+        - 'boolean\s+debug\s*=\s*true'
+        - 'boolean\s+DEBUG\s*=\s*true'
+    
+    - id: BP002
+      name: No System.exit
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Use proper exception handling
+      pattern: 'System\.exit\('
+    
+    - id: BP003
+      name: No Thread.sleep
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Use proper concurrency utilities
+      pattern: 'Thread\.sleep\('
+    
+    - id: BP004
+      name: No String Concatenation in Loops
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Use StringBuilder in loops
+    
+    - id: BP005
+      name: No == for String Comparison
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Use .equals() for string comparison
+      patterns:
+        - '\w+\s*==\s*"[^"]*"'
+        - '"[^"]*"\s*==\s*\w+'
+    
+    - id: BP006
+      name: No Public Fields
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Make fields private with getters/setters
+      pattern: 'public\s+(?!class|interface|enum|static\s+final)\w+\s+\w+\s*;'
+    
+    - id: BP007
+      name: No Static Mutable Variables
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Make static variables final or use thread-safe alternatives
+      pattern: 'static\s+(?!final)\w+\s+\w+\s*='
+
+
+frontend_rules:
+  shared:
+    - id: FE001
+      name: IBM License Header for Frontend Files
+      enabled: true
+      severity: HIGH
+      blocking: true
+      description: Every TS, TSX, and SCSS file must start with IBM copyright/license header
+      patterns:
+        - 'Copyright.*IBM'
+        - 'Licensed under.*Apache License'
+
+    - id: FE002
+      name: No Hardcoded Secrets in Frontend
+      enabled: true
+      severity: CRITICAL
+      blocking: true
+      description: Detect hardcoded passwords, API keys, tokens, and secrets in frontend code
+      patterns:
+        - 'password\s*[:=]\s*["''][^"'']+["'']'
+        - 'api[_-]?key\s*[:=]\s*["''][^"'']+["'']'
+        - 'secret\s*[:=]\s*["''][^"'']+["'']'
+        - 'token\s*[:=]\s*["''][^"'']+["'']'
+        - 'client[_-]?secret\s*[:=]\s*["''][^"'']+["'']'
+
+    - id: FE003
+      name: No Logging Sensitive Data in Frontend
+      enabled: true
+      severity: CRITICAL
+      blocking: true
+      description: Do not log secrets, tokens, api keys, or passwords
+      patterns:
+        - 'console\.(log|error|warn|info)\([^)]*password[^)]*\)'
+        - 'console\.(log|error|warn|info)\([^)]*token[^)]*\)'
+        - 'console\.(log|error|warn|info)\([^)]*secret[^)]*\)'
+        - 'console\.(log|error|warn|info)\([^)]*api[_A-Za-z]*key[^)]*\)'
+
+    - id: FE004
+      name: No TODO/FIXME Comments in Frontend
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Create issues instead of TODO comments
+      patterns:
+        - '//\s*TODO'
+        - '//\s*FIXME'
+        - '/\*\s*TODO'
+        - '/\*\s*FIXME'
+
+    - id: FE005
+      name: No Hardcoded URLs in Frontend
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Use environment configuration for URLs
+      patterns:
+        - 'https?://[^\s"'']+(?=["''])'
+        - 'localhost:\d+'
+
+    - id: FE006
+      name: No Commented-Out Code in Frontend
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Remove commented code blocks
+      min_consecutive_comments: 4
+
+    - id: FE007
+      name: No Console Statements
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Avoid console statements in committed frontend code
+      patterns:
+        - 'console\.log\('
+        - 'console\.error\('
+        - 'console\.warn\('
+        - 'console\.info\('
+
+    - id: FE008
+      name: No Hardcoded Debug Flags in Frontend
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Avoid hardcoded debug flags
+      patterns:
+        - 'const\s+DEBUG\s*=\s*true'
+        - 'const\s+debug\s*=\s*true'
+        - 'let\s+debug\s*=\s*true'
+
+    - id: FE009
+      name: No String Concatenation in Frontend Logging
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Avoid string concatenation in console logging
+      patterns:
+        - 'console\.(log|error|warn|info)\([^)]*\+[^)]*\)'
+
+    - id: FE010
+      name: Boolean Naming Convention for Frontend
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Boolean variables should start with is/has/should/can/will
+      pattern: '\b(?:const|let|var)\s+(?!is|has|should|can|will)[a-zA-Z_]\w*\s*:\s*boolean\b'
+
+  typescript:
+    - id: TS001
+      name: No var in TypeScript
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Use let or const instead of var
+      pattern: '\bvar\s+\w+'
+
+    - id: TS002
+      name: Prefer const over let
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Use const when value is not reassigned
+
+    - id: TS003
+      name: No Unused Variables
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Variables should not be declared and left unused
+
+    - id: TS004
+      name: No Unused Functions or Methods
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Functions and methods should be used after declaration
+
+    - id: TS005
+      name: No debugger Statements
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Remove debugger statements before merge
+      pattern: '\bdebugger\b'
+
+    - id: TS006
+      name: No explicit any
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Use a specific type instead of any
+      patterns:
+        - ':\s*any\b'
+        - '<any>'
+        - '\bas\s+any\b'
+
+    - id: TS007
+      name: No eval Usage
+      enabled: true
+      severity: HIGH
+      blocking: true
+      description: Avoid eval in frontend code
+      pattern: '\beval\s*\('
+
+    - id: TS008
+      name: No dangerouslySetInnerHTML
+      enabled: true
+      severity: HIGH
+      blocking: true
+      description: Avoid dangerouslySetInnerHTML unless fully sanitized
+      pattern: 'dangerouslySetInnerHTML'
+
+    - id: TS009
+      name: No Generic Variable Names in Frontend
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Use descriptive variable names in TypeScript
+      blacklist:
+        - temp
+        - data
+        - obj
+        - var
+        - thing
+        - stuff
+        - foo
+        - bar
+
+  tsx:
+    - id: TSX001
+      name: React state value must be used
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: State value declared with useState should be used
+
+    - id: TSX002
+      name: React state setter must be used
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: State setter declared with useState should be used
+
+    - id: TSX003
+      name: React state should be updated when declared
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: If state is declared, setter should be called or state should be replaced with const
+
+  scss:
+    - id: SCSS001
+      name: No px Units
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Use rem instead of px, where 1rem = 16px
+
+    - id: SCSS002
+      name: No ID Selectors
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Prefer class selectors over id selectors
+      pattern: '^\s*#[a-zA-Z_-][\w-]*\s*\{'
+
+    - id: SCSS003
+      name: Max Nesting Depth
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Limit SCSS nesting depth
+      max_depth: 3
+
+    - id: SCSS004
+      name: No Hardcoded Hex Colors
+      enabled: true
+      severity: MEDIUM
+      blocking: false
+      description: Use design tokens or variables instead of hardcoded hex colors
+      pattern: '#[0-9a-fA-F]{3,8}\b'
+
+    - id: SCSS005
+      name: No Empty SCSS Blocks
+      enabled: true
+      severity: LOW
+      blocking: false
+      description: Remove empty SCSS blocks
+# Severity Configuration
+severity_levels:
+  CRITICAL:
+    color: '#FF0000'
+    blocks_merge: true
+    priority: 1
+  
+  HIGH:
+    color: '#FF6600'
+    blocks_merge: true
+    priority: 2
+  
+  MEDIUM:
+    color: '#FFAA00'
+    blocks_merge: false
+    priority: 3
+  
+  LOW:
+    color: '#FFFF00'
+    blocks_merge: false
+    priority: 4
+
+# Analysis Configuration
+analysis:
+  max_file_size: 10000  # lines
+  timeout: 300  # seconds
+  parallel: true
+  cache_enabled: true
+
+# Made with Bob
