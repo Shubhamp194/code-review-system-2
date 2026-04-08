@@ -78,16 +78,22 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           
           # Analyze only changed files (not entire repo)
+          HAS_VIOLATIONS=0
           while IFS= read -r file; do
             if [ -f "$file" ]; then
               echo "Analyzing: $file"
-              PYTHONPATH=src python -m analyzer.main --config config/rules.yaml file "$file" \
-                --output-format github || exit 1
+              PYTHONPATH=src python -m analyzer.main --config config/rules.yaml file "$file" || HAS_VIOLATIONS=1
             fi
           done < changed_files.txt
           
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "✅ Code review passed - no blocking violations found"
+          
+          if [ $HAS_VIOLATIONS -eq 1 ]; then
+            echo "❌ Code review failed - blocking violations found"
+            exit 1
+          else
+            echo "✅ Code review passed - no blocking violations found"
+          fi
 
       - name: Generate AI Code Explanation (Non-blocking)
         id: ai-explanation
@@ -104,10 +110,21 @@ jobs:
           echo "🤖 Generating AI explanation for PR changes..."
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           
-          # Get only the changed files for explanation
-          CHANGED_FILES=$(cat changed_files.txt | tr '\n' ' ')
+          # Create a temporary directory with only changed files for explanation
+          mkdir -p /tmp/pr_changes
+          while IFS= read -r file; do
+            if [ -f "$file" ]; then
+              # Create directory structure
+              mkdir -p "/tmp/pr_changes/$(dirname "$file")"
+              cp "$file" "/tmp/pr_changes/$file"
+            fi
+          done < changed_files.txt
           
-          timeout 2m PYTHONPATH=src python -m analyzer.main --config config/rules.yaml explain $CHANGED_FILES || {
+          # Run explanation on the temporary directory
+          (
+            cd /tmp/pr_changes
+            timeout 2m bash -c "PYTHONPATH=$GITHUB_WORKSPACE/src python -m analyzer.main --config $GITHUB_WORKSPACE/config/rules.yaml explain ."
+          ) || {
             echo "⚠️  AI explanation timed out or failed"
             echo "This does not affect the PR review status"
           }
