@@ -65,18 +65,54 @@ jobs:
           echo "Changed/supported files:"
           cat changed_files.txt || true
 
-      - name: Run combined review
-        id: analysis
+      - name: Run PR Code Review (Blocking)
+        id: code-review
+        timeout-minutes: 3
         run: |
           if [ ! -s changed_files.txt ]; then
-            echo "No supported files changed"
+            echo "✅ No supported files changed"
             exit 0
           fi
 
-          PYTHONPATH=src python -m analyzer.main --config config/rules.yaml review . \
-            --pr-title "${{ github.event.pull_request.title || github.event.repository.name }}" \
-            --pr-description "${{ github.event.pull_request.body || 'Manual workflow execution' }}" \
-            --output analysis-results.json
+          echo "🔍 Running code review on PR changes only..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          
+          # Analyze only changed files (not entire repo)
+          while IFS= read -r file; do
+            if [ -f "$file" ]; then
+              echo "Analyzing: $file"
+              PYTHONPATH=src python -m analyzer.main --config config/rules.yaml file "$file" \
+                --output-format github || exit 1
+            fi
+          done < changed_files.txt
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ Code review passed - no blocking violations found"
+
+      - name: Generate AI Code Explanation (Non-blocking)
+        id: ai-explanation
+        if: always()
+        timeout-minutes: 3
+        continue-on-error: true
+        run: |
+          if [ ! -s changed_files.txt ]; then
+            echo "No files to explain"
+            exit 0
+          fi
+
+          echo ""
+          echo "🤖 Generating AI explanation for PR changes..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          
+          # Get only the changed files for explanation
+          CHANGED_FILES=$(cat changed_files.txt | tr '\n' ' ')
+          
+          timeout 2m PYTHONPATH=src python -m analyzer.main --config config/rules.yaml explain $CHANGED_FILES || {
+            echo "⚠️  AI explanation timed out or failed"
+            echo "This does not affect the PR review status"
+          }
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
       - name: Upload Analysis Results
         uses: actions/upload-artifact@v4
@@ -95,16 +131,19 @@ jobs:
           echo "🤖 AI Code Review Complete"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
-          echo "Includes:"
-          echo "  • Static violation analysis"
-          echo "  • Ollama-backed PR explanation"
-          echo "  • Heuristic fallback if model output is unusable"
+          echo "Two-Step Analysis:"
+          echo "  1. 🔍 PR Code Review (Blocking)"
+          echo "     • Analyzes only changed files in PR"
+          echo "     • Detects violations (CRITICAL/HIGH/MEDIUM/LOW)"
+          echo "     • Blocks merge if CRITICAL/HIGH violations found"
           echo ""
-          echo "Ollama endpoint used inside runner:"
-          echo "  http://127.0.0.1:11434"
+          echo "  2. 🤖 AI Code Explanation (Non-blocking)"
+          echo "     • Explains what changed and why"
+          echo "     • Provides context for reviewers"
+          echo "     • Does not block merge if it fails"
           echo ""
-          echo "Model:"
-          echo "  qwen2.5-coder:1.5b"
+          echo "AI Model: qwen2.5-coder:1.5b"
+          echo "Endpoint: http://127.0.0.1:11434"
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 

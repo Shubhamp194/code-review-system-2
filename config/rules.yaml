@@ -635,7 +635,7 @@ pr_explanation:
   model: qwen2.5-coder:1.5b
   base_url: http://127.0.0.1:11434
   fallback_to_heuristic: true
-  timeout_seconds: 120
+  timeout_seconds: 30
   include_extensions:
     - .java
     - .ts
