@@ -84,6 +84,7 @@ jobs:
           PR_DESCRIPTION="${{ github.event_name == 'pull_request' && github.event.pull_request.body || 'Manual workflow execution' }}"
 
           PYTHONPATH=src python -m analyzer.main --config config/rules.yaml explain . \
+            --changed-files-list changed_files.txt \
             --pr-title "$PR_TITLE" \
             --pr-description "$PR_DESCRIPTION" \
             --output explanation-results.json || {
@@ -142,6 +143,7 @@ jobs:
           PR_DESCRIPTION="${{ github.event_name == 'pull_request' && github.event.pull_request.body || 'Manual workflow execution' }}"
 
           PYTHONPATH=src python -m analyzer.main --config config/rules.yaml defects . \
+            --changed-files-list changed_files.txt \
             --pr-title "$PR_TITLE" \
             --pr-description "$PR_DESCRIPTION" \
             --output defect-results.json || {
@@ -171,6 +173,7 @@ jobs:
           PR_DESCRIPTION="${{ github.event_name == 'pull_request' && github.event.pull_request.body || 'Manual workflow execution' }}"
 
           PYTHONPATH=src python -m analyzer.main --config config/rules.yaml design . \
+            --changed-files-list changed_files.txt \
             --pr-title "$PR_TITLE" \
             --pr-description "$PR_DESCRIPTION" \
             --output design-results.json || {

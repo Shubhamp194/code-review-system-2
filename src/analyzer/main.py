@@ -7,7 +7,7 @@ import sys
 import json
 import argparse
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 import colorama
 from colorama import Fore, Style
 
@@ -73,6 +73,67 @@ def find_supported_files(directory: str) -> List[str]:
             if file.endswith(SUPPORTED_EXTENSIONS):
                 supported_files.append(os.path.join(root, file))
     return supported_files
+
+
+def load_changed_files_from_list(project_root: str, changed_files_list_path: str) -> List[Dict[str, Any]]:
+    """Load changed-file metadata from a newline-delimited file list."""
+    changed_files: List[Dict[str, Any]] = []
+    seen_paths = set()
+
+    with open(changed_files_list_path, 'r', encoding='utf-8') as file_handle:
+        relative_paths = [line.strip() for line in file_handle if line.strip()]
+
+    for relative_path in relative_paths:
+        normalized_relative_path = relative_path.lstrip('./')
+        if normalized_relative_path in seen_paths:
+            continue
+        seen_paths.add(normalized_relative_path)
+
+        file_path = os.path.join(project_root, normalized_relative_path)
+        if not os.path.isfile(file_path):
+            continue
+
+        if not file_path.endswith(SUPPORTED_EXTENSIONS):
+            continue
+
+        content = read_file(file_path)
+        if not content:
+            continue
+
+        changed_files.append({
+            'path': file_path,
+            'content': content,
+            'diff': '',
+            'change_type': 'modified',
+            'additions': len([line for line in content.splitlines() if line.strip()]),
+            'deletions': 0
+        })
+
+    return changed_files
+
+
+def build_changed_files(args) -> List[Dict[str, Any]]:
+    """Build changed file payload either from diff list or from full project scan."""
+    if getattr(args, 'changed_files_list', None):
+        print(f"{Fore.CYAN}Loading changed files from list: {args.changed_files_list}")
+        return load_changed_files_from_list(args.project, args.changed_files_list)
+
+    supported_files = find_supported_files(args.project)
+    changed_files = []
+
+    for file_path in supported_files:
+        content = read_file(file_path)
+        if content:
+            changed_files.append({
+                'path': file_path,
+                'content': content,
+                'diff': '',
+                'change_type': 'modified',
+                'additions': len([line for line in content.splitlines() if line.strip()]),
+                'deletions': 0
+            })
+
+    return changed_files
 
 
 def print_violation(violation: Dict, show_code: bool = True):
@@ -303,9 +364,14 @@ def explain_project_cmd(args):
     """Generate point-based explanation for supported files in a project"""
     analyzer = PRExplanationAnalyzer(load_config(args.config))
 
-    print(f"{Fore.CYAN}Scanning for supported files in: {args.project}")
-    results = analyzer.analyze_project_files(
-        project_root=args.project,
+    changed_files = build_changed_files(args)
+    if not changed_files:
+        print(f"{Fore.YELLOW}No supported files found ({', '.join(SUPPORTED_EXTENSIONS)})")
+        return 0
+
+    print(f"{Fore.CYAN}Analyzing {len(changed_files)} changed supported files")
+    results = analyzer.analyze(
+        changed_files=changed_files,
         pr_title=args.pr_title or "",
         pr_description=args.pr_description or ""
     )
@@ -324,25 +390,11 @@ def defect_project_cmd(args):
     """Detect likely defects for supported files in a project"""
     detector = PRDefectDetector(load_config(args.config))
 
-    print(f"{Fore.CYAN}Scanning for supported files in: {args.project}")
-    supported_files = find_supported_files(args.project)
+    changed_files = build_changed_files(args)
 
-    if not supported_files:
+    if not changed_files:
         print(f"{Fore.YELLOW}No supported files found ({', '.join(SUPPORTED_EXTENSIONS)})")
         return 0
-
-    changed_files = []
-    for file_path in supported_files:
-        content = read_file(file_path)
-        if content:
-            changed_files.append({
-                'path': file_path,
-                'content': content,
-                'diff': '',
-                'change_type': 'modified',
-                'additions': len([line for line in content.splitlines() if line.strip()]),
-                'deletions': 0
-            })
 
     results = detector.analyze(
         changed_files=changed_files,
@@ -364,25 +416,11 @@ def design_project_cmd(args):
     """Generate design recommendations for supported files in a project"""
     analyzer = PRDesignRecommendationAnalyzer(load_config(args.config))
 
-    print(f"{Fore.CYAN}Scanning for supported files in: {args.project}")
-    supported_files = find_supported_files(args.project)
+    changed_files = build_changed_files(args)
 
-    if not supported_files:
+    if not changed_files:
         print(f"{Fore.YELLOW}No supported files found ({', '.join(SUPPORTED_EXTENSIONS)})")
         return 0
-
-    changed_files = []
-    for file_path in supported_files:
-        content = read_file(file_path)
-        if content:
-            changed_files.append({
-                'path': file_path,
-                'content': content,
-                'diff': '',
-                'change_type': 'modified',
-                'additions': len([line for line in content.splitlines() if line.strip()]),
-                'deletions': 0
-            })
 
     results = analyzer.analyze(
         changed_files=changed_files,
@@ -408,30 +446,18 @@ def analyze_and_explain_project_cmd(args):
     defect_detector = PRDefectDetector(loaded_config)
     design_recommender = PRDesignRecommendationAnalyzer(loaded_config)
 
-    print(f"{Fore.CYAN}Scanning for supported files in: {args.project}")
-    supported_files = find_supported_files(args.project)
+    changed_files = build_changed_files(args)
 
-    if not supported_files:
+    if not changed_files:
         print(f"{Fore.YELLOW}No supported files found ({', '.join(SUPPORTED_EXTENSIONS)})")
         return 0
 
-    print(f"{Fore.CYAN}Found {len(supported_files)} supported files")
+    print(f"{Fore.CYAN}Found {len(changed_files)} changed supported files")
 
-    files = {}
-    changed_files = []
-
-    for file_path in supported_files:
-        content = read_file(file_path)
-        if content:
-            files[file_path] = content
-            changed_files.append({
-                'path': file_path,
-                'content': content,
-                'diff': '',
-                'change_type': 'modified',
-                'additions': len([line for line in content.splitlines() if line.strip()]),
-                'deletions': 0
-            })
+    files = {
+        file_info['path']: file_info['content']
+        for file_info in changed_files
+    }
 
     print(f"\n{Fore.CYAN}Generating PR change explanation...")
     explanation_results = explainer.analyze(
@@ -552,6 +578,7 @@ def main():
     explain_parser.add_argument('--pr-title', help='PR title context for explanation')
     explain_parser.add_argument('--pr-description', help='PR description context for explanation')
     explain_parser.add_argument('--output', '-o', help='Output file for explanation results (JSON)')
+    explain_parser.add_argument('--changed-files-list', help='Path to newline-delimited changed file list')
 
     # Defect detection command
     defects_parser = subparsers.add_parser('defects', help='Detect likely defects for supported files in a project')
@@ -559,6 +586,7 @@ def main():
     defects_parser.add_argument('--pr-title', help='PR title context for defect detection')
     defects_parser.add_argument('--pr-description', help='PR description context for defect detection')
     defects_parser.add_argument('--output', '-o', help='Output file for defect results (JSON)')
+    defects_parser.add_argument('--changed-files-list', help='Path to newline-delimited changed file list')
 
     # Design recommendation command
     design_parser = subparsers.add_parser('design', help='Generate design recommendations for supported files in a project')
@@ -566,6 +594,7 @@ def main():
     design_parser.add_argument('--pr-title', help='PR title context for design recommendations')
     design_parser.add_argument('--pr-description', help='PR description context for design recommendations')
     design_parser.add_argument('--output', '-o', help='Output file for design recommendation results (JSON)')
+    design_parser.add_argument('--changed-files-list', help='Path to newline-delimited changed file list')
 
     # Analyze and explain project command
     review_parser = subparsers.add_parser('review', help='Run violations, PR-style explanation, defect detection, and design recommendations together')
@@ -576,6 +605,7 @@ def main():
     review_parser.add_argument('--show-code', action='store_true', help='Show code snippets')
     review_parser.add_argument('--max-violations', type=int, default=10,
                                help='Max violations to display per severity')
+    review_parser.add_argument('--changed-files-list', help='Path to newline-delimited changed file list')
 
     # List rules command
     rules_parser = subparsers.add_parser('rules', help='List all enabled rules')
