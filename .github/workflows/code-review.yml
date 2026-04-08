@@ -65,40 +65,10 @@ jobs:
           echo "Changed/supported files:"
           cat changed_files.txt || true
 
-      - name: Run PR Code Review (Blocking)
-        id: code-review
-        timeout-minutes: 3
-        run: |
-          if [ ! -s changed_files.txt ]; then
-            echo "✅ No supported files changed"
-            exit 0
-          fi
-
-          echo "🔍 Running code review on PR changes only..."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          
-          # Analyze only changed files (not entire repo)
-          HAS_VIOLATIONS=0
-          while IFS= read -r file; do
-            if [ -f "$file" ]; then
-              echo "Analyzing: $file"
-              PYTHONPATH=src python -m analyzer.main --config config/rules.yaml file "$file" || HAS_VIOLATIONS=1
-            fi
-          done < changed_files.txt
-          
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          
-          if [ $HAS_VIOLATIONS -eq 1 ]; then
-            echo "❌ Code review failed - blocking violations found"
-            exit 1
-          else
-            echo "✅ Code review passed - no blocking violations found"
-          fi
-
       - name: Generate AI Code Explanation (Non-blocking)
         id: ai-explanation
         if: always()
-        timeout-minutes: 3
+        timeout-minutes: 4
         continue-on-error: true
         run: |
           if [ ! -s changed_files.txt ]; then
@@ -109,26 +79,77 @@ jobs:
           echo ""
           echo "🤖 Generating AI explanation for PR changes..."
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          
-          # Create a temporary directory with only changed files for explanation
-          mkdir -p /tmp/pr_changes
+
+          PR_TITLE="${{ github.event_name == 'pull_request' && github.event.pull_request.title || github.event.repository.name }}"
+          PR_DESCRIPTION="${{ github.event_name == 'pull_request' && github.event.pull_request.body || 'Manual workflow execution' }}"
+
+          PYTHONPATH=src python -m analyzer.main --config config/rules.yaml explain . \
+            --pr-title "$PR_TITLE" \
+            --pr-description "$PR_DESCRIPTION" \
+            --output explanation-results.json || {
+              echo "⚠️  AI explanation timed out or failed"
+              echo "This does not affect the PR review status"
+            }
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Run PR Code Review (Blocking)
+        id: code-review
+        timeout-minutes: 4
+        run: |
+          if [ ! -s changed_files.txt ]; then
+            echo "✅ No supported files changed"
+            exit 0
+          fi
+
+          echo "🔍 Running code review on PR changes only..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          BLOCKING_FOUND=0
+
           while IFS= read -r file; do
             if [ -f "$file" ]; then
-              # Create directory structure
-              mkdir -p "/tmp/pr_changes/$(dirname "$file")"
-              cp "$file" "/tmp/pr_changes/$file"
+              echo "Analyzing: $file"
+              PYTHONPATH=src python -m analyzer.main --config config/rules.yaml file "$file" --show-code || BLOCKING_FOUND=1
             fi
           done < changed_files.txt
-          
-          # Run explanation on the temporary directory
-          (
-            cd /tmp/pr_changes
-            timeout 2m bash -c "PYTHONPATH=$GITHUB_WORKSPACE/src python -m analyzer.main --config $GITHUB_WORKSPACE/config/rules.yaml explain ."
-          ) || {
-            echo "⚠️  AI explanation timed out or failed"
-            echo "This does not affect the PR review status"
-          }
-          
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          if [ "$BLOCKING_FOUND" -ne 0 ]; then
+            echo "❌ Code review failed - blocking violations found"
+            exit 1
+          fi
+
+          echo "✅ Code review passed - no blocking violations found"
+
+      - name: Detect Potential Defects (Non-blocking)
+        id: defect-detection
+        if: always()
+        timeout-minutes: 4
+        continue-on-error: true
+        run: |
+          if [ ! -s changed_files.txt ]; then
+            echo "No files to inspect for potential defects"
+            exit 0
+          fi
+
+          echo ""
+          echo "🧠 Detecting potential defects in PR changes..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          PR_TITLE="${{ github.event_name == 'pull_request' && github.event.pull_request.title || github.event.repository.name }}"
+          PR_DESCRIPTION="${{ github.event_name == 'pull_request' && github.event.pull_request.body || 'Manual workflow execution' }}"
+
+          PYTHONPATH=src python -m analyzer.main --config config/rules.yaml defects . \
+            --pr-title "$PR_TITLE" \
+            --pr-description "$PR_DESCRIPTION" \
+            --output defect-results.json || {
+              echo "⚠️  Potential defect detection failed"
+              echo "This does not affect the PR review status"
+            }
+
+          echo "This step is informational and does not affect PR review status"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
       - name: Upload Analysis Results
@@ -138,6 +159,8 @@ jobs:
           name: code-review-report
           path: |
             analysis-results.json
+            explanation-results.json
+            defect-results.json
             /tmp/ollama.log
 
       - name: Summary
@@ -148,16 +171,21 @@ jobs:
           echo "🤖 AI Code Review Complete"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
-          echo "Two-Step Analysis:"
-          echo "  1. 🔍 PR Code Review (Blocking)"
+          echo "Three-Step Analysis:"
+          echo "  1. 🤖 AI Code Explanation (Non-blocking)"
+          echo "     • Explains what changed and why"
+          echo "     • Uses Ollama when available, with heuristic fallback"
+          echo "     • Does not block merge if it fails"
+          echo ""
+          echo "  2. 🔍 PR Code Review (Blocking)"
           echo "     • Analyzes only changed files in PR"
           echo "     • Detects violations (CRITICAL/HIGH/MEDIUM/LOW)"
-          echo "     • Blocks merge if CRITICAL/HIGH violations found"
+          echo "     • Fails the workflow when blocking violations are found"
           echo ""
-          echo "  2. 🤖 AI Code Explanation (Non-blocking)"
-          echo "     • Explains what changed and why"
-          echo "     • Provides context for reviewers"
-          echo "     • Does not block merge if it fails"
+          echo "  3. 🧠 Potential Defect Detection (Non-blocking)"
+          echo "     • Uses Ollama to identify likely defects in changed code"
+          echo "     • Focuses on PR-only changed files"
+          echo "     • Does not block merge if it fails or finds issues"
           echo ""
           echo "AI Model: qwen2.5-coder:1.5b"
           echo "Endpoint: http://127.0.0.1:11434"

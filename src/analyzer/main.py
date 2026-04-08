@@ -13,6 +13,7 @@ from colorama import Fore, Style
 
 from .rule_engine import RuleEngine
 from .pr_explanation_analyzer import PRExplanationAnalyzer
+from .defect_detector import PRDefectDetector
 import yaml
 
 
@@ -164,24 +165,61 @@ def print_explanation_summary(results: Dict):
                     print(f"{color}    - {point}")
 
 
+def print_defect_summary(results: Dict):
+    """Print potential defect detection summary"""
+    findings = results.get('findings', [])
+
+    print(f"\n{Style.BRIGHT}{'='*60}")
+    print(f"{Style.BRIGHT}POTENTIAL DEFECT DETECTION")
+    print(f"{Style.BRIGHT}{'='*60}")
+
+    print(f"\n{Fore.WHITE}Files Analyzed: {results.get('total_files_considered', 0)}")
+    print(f"{Fore.WHITE}Potential Defects Found: {len(findings)}")
+
+    if not findings:
+        print(f"{Fore.GREEN}✅ No likely defects detected from changed code")
+        return
+
+    for finding in findings:
+        severity = finding.get('severity', 'MEDIUM')
+        color = Fore.RED if severity == 'HIGH' else Fore.YELLOW if severity == 'MEDIUM' else Fore.WHITE
+        print(f"\n{color}{Style.BRIGHT}[{severity}] {finding.get('title', 'Potential defect')}")
+        print(f"{color}  File: {finding.get('file', 'unknown')}")
+        print(f"{color}  Summary: {finding.get('summary', '')}")
+        for impact in finding.get('potential_impacts', []):
+            print(f"{color}    - Impact: {impact}")
+        for recommendation in finding.get('recommendations', []):
+            print(f"{Fore.GREEN}    - Recommendation: {recommendation}")
+
+
 def analyze_file_cmd(args):
     """Analyze a single file"""
     engine = RuleEngine(args.config)
-    
+
     content = read_file(args.file)
     if not content:
         return 1
-    
+
     print(f"{Fore.CYAN}Analyzing: {args.file}")
     violations = engine.analyze_file(args.file, content)
-    
+
+    violation_dicts = [violation.to_dict() for violation in violations]
+    blocking_violations = [
+        violation for violation in violation_dicts
+        if violation['severity'] in {'CRITICAL', 'HIGH'}
+    ]
+
     if violations:
         print(f"\n{Fore.YELLOW}Found {len(violations)} violations:")
-        for violation in violations:
-            print_violation(violation.to_dict(), args.show_code)
+        for violation in violation_dicts:
+            print_violation(violation, args.show_code)
     else:
         print(f"{Fore.GREEN}✅ No violations found!")
-    
+
+    if blocking_violations:
+        print(f"\n{Fore.RED}{Style.BRIGHT}❌ Blocking violations found in file")
+        return 1
+
     return 0
 
 
@@ -253,10 +291,52 @@ def explain_project_cmd(args):
     return 0
 
 
+def defect_project_cmd(args):
+    """Detect likely defects for supported files in a project"""
+    detector = PRDefectDetector(load_config(args.config))
+
+    print(f"{Fore.CYAN}Scanning for supported files in: {args.project}")
+    supported_files = find_supported_files(args.project)
+
+    if not supported_files:
+        print(f"{Fore.YELLOW}No supported files found ({', '.join(SUPPORTED_EXTENSIONS)})")
+        return 0
+
+    changed_files = []
+    for file_path in supported_files:
+        content = read_file(file_path)
+        if content:
+            changed_files.append({
+                'path': file_path,
+                'content': content,
+                'diff': '',
+                'change_type': 'modified',
+                'additions': len([line for line in content.splitlines() if line.strip()]),
+                'deletions': 0
+            })
+
+    results = detector.analyze(
+        changed_files=changed_files,
+        pr_title=args.pr_title or "",
+        pr_description=args.pr_description or ""
+    )
+
+    print_defect_summary(results)
+
+    if args.output:
+        with open(args.output, 'w') as f:
+            json.dump(results, f, indent=2)
+        print(f"\n{Fore.GREEN}Defect analysis saved to: {args.output}")
+
+    return 0
+
+
 def analyze_and_explain_project_cmd(args):
-    """Run violation analysis and PR explanation together"""
+    """Run violation analysis, PR explanation, and defect detection together"""
     engine = RuleEngine(args.config)
-    explainer = PRExplanationAnalyzer(load_config(args.config))
+    loaded_config = load_config(args.config)
+    explainer = PRExplanationAnalyzer(loaded_config)
+    defect_detector = PRDefectDetector(loaded_config)
 
     print(f"{Fore.CYAN}Scanning for supported files in: {args.project}")
     supported_files = find_supported_files(args.project)
@@ -283,7 +363,15 @@ def analyze_and_explain_project_cmd(args):
                 'deletions': 0
             })
 
-    print(f"{Fore.CYAN}Running violation analysis...")
+    print(f"\n{Fore.CYAN}Generating PR change explanation...")
+    explanation_results = explainer.analyze(
+        changed_files=changed_files,
+        pr_title=args.pr_title or "",
+        pr_description=args.pr_description or ""
+    )
+    print_explanation_summary(explanation_results)
+
+    print(f"\n{Fore.CYAN}Running violation analysis...")
     violation_results = engine.analyze_files(files)
 
     for severity in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']:
@@ -298,17 +386,18 @@ def analyze_and_explain_project_cmd(args):
 
     print_summary(violation_results)
 
-    print(f"\n{Fore.CYAN}Generating PR change explanation...")
-    explanation_results = explainer.analyze(
+    print(f"\n{Fore.CYAN}Detecting potential defects in changed code...")
+    defect_results = defect_detector.analyze(
         changed_files=changed_files,
         pr_title=args.pr_title or "",
         pr_description=args.pr_description or ""
     )
-    print_explanation_summary(explanation_results)
+    print_defect_summary(defect_results)
 
     combined_results = {
+        'explanation': explanation_results,
         'violations': violation_results,
-        'explanation': explanation_results
+        'defects': defect_results
     }
 
     if args.output:
@@ -385,8 +474,15 @@ def main():
     explain_parser.add_argument('--pr-description', help='PR description context for explanation')
     explain_parser.add_argument('--output', '-o', help='Output file for explanation results (JSON)')
 
+    # Defect detection command
+    defects_parser = subparsers.add_parser('defects', help='Detect likely defects for supported files in a project')
+    defects_parser.add_argument('project', help='Path to project directory')
+    defects_parser.add_argument('--pr-title', help='PR title context for defect detection')
+    defects_parser.add_argument('--pr-description', help='PR description context for defect detection')
+    defects_parser.add_argument('--output', '-o', help='Output file for defect results (JSON)')
+
     # Analyze and explain project command
-    review_parser = subparsers.add_parser('review', help='Run violations and PR-style explanation together')
+    review_parser = subparsers.add_parser('review', help='Run violations, PR-style explanation, and defect detection together')
     review_parser.add_argument('project', help='Path to project directory')
     review_parser.add_argument('--pr-title', help='PR title context for explanation')
     review_parser.add_argument('--pr-description', help='PR description context for explanation')
@@ -413,6 +509,8 @@ def main():
             return analyze_project_cmd(args)
         elif args.command == 'explain':
             return explain_project_cmd(args)
+        elif args.command == 'defects':
+            return defect_project_cmd(args)
         elif args.command == 'review':
             return analyze_and_explain_project_cmd(args)
         elif args.command == 'rules':
